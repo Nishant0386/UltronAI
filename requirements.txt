@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+python-multipart
+deep-translator
+edge-tts
+pytesseract
+Pillow
+groq
+python-dotenv
+aiofiles
+httpx
+duckduckgo-search
+langdetect
+pypdf
+python-docx

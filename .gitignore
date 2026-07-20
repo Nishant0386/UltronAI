@@ -1,0 +1,22 @@
+# Local env files
+.env
+.env.*
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+env/
+venv/
+
+# Temporary audio files
+*.mp3
+*.wav
+*.m4a
+
+# OS files
+.DS_Store
+Thumbs.db
