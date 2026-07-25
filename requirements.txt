@@ -13,3 +13,15 @@ duckduckgo-search
 langdetect
 pypdf
 python-docx
+playwright
+pyautogui
+pydirectinput
+pywinauto; sys_platform == "win32"
+pygetwindow
+psutil
+pyperclip
+pywin32; sys_platform == "win32"
+pywebview
+pystray
+pythonnet
+google-generativeai

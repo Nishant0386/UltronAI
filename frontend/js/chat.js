@@ -91,6 +91,71 @@ async function sendMessage() {
                         contentBox.innerHTML = marked.parse(aiFullText);
                         chatBox.scrollTop = chatBox.scrollHeight;
                     }
+                    if (data.agent_log) {
+                        // Dynamically update Desktop Agent HUD and Log
+                        const logContainer = document.getElementById('agentLogContainer');
+                        const statusLabel = document.getElementById('agentOSStatus');
+                        const browserLabel = document.getElementById('agentBrowserStatus');
+                        const activeActionLabel = document.getElementById('agentActiveAction');
+                        const progressBar = document.getElementById('agentProgressBar');
+                        const timelinePercent = document.getElementById('agentTimelinePercent');
+
+                        if (logContainer) {
+                            if (logContainer.querySelector('.italic')) {
+                                logContainer.innerHTML = '';
+                            }
+                            const div = document.createElement('div');
+                            div.className = "text-[10px] font-mono text-slate-400 bg-slate-950/40 px-2 py-1 rounded border border-slate-900 break-all leading-normal";
+                            div.textContent = data.agent_log;
+                            logContainer.appendChild(div);
+                            logContainer.scrollTop = logContainer.scrollHeight;
+                        }
+
+                        const log = data.agent_log;
+                        if (log.includes("Executing:")) {
+                            if (statusLabel) {
+                                statusLabel.textContent = "BUSY";
+                                statusLabel.className = "text-amber-400 font-bold uppercase tracking-wider animate-pulse";
+                            }
+                        } else if (log.includes("SUCCESS")) {
+                            if (statusLabel) {
+                                statusLabel.textContent = "ACTIVE";
+                                statusLabel.className = "text-emerald-400 font-bold uppercase tracking-wider";
+                            }
+                        } else if (log.includes("failed") || log.includes("ERROR")) {
+                            if (statusLabel) {
+                                statusLabel.textContent = "ERROR";
+                                statusLabel.className = "text-rose-500 font-bold uppercase tracking-wider animate-pulse";
+                            }
+                        }
+
+                        // Progress Timeline
+                        const stepMatch = log.match(/Step (\d+)\/(\d+)/);
+                        if (stepMatch) {
+                            const current = parseInt(stepMatch[1]);
+                            const total = parseInt(stepMatch[2]);
+                            const percent = Math.round((current / total) * 100);
+                            
+                            if (progressBar) progressBar.style.width = `${percent}%`;
+                            if (timelinePercent) timelinePercent.textContent = `${percent}%`;
+                            
+                            if (activeActionLabel) {
+                                activeActionLabel.classList.remove('hidden');
+                                activeActionLabel.textContent = log.split(':').slice(1).join(':').trim();
+                            }
+                        }
+
+                        if (log.includes("Navigated") || log.includes("Opened new tab") || log.includes("Playwright")) {
+                            if (browserLabel) {
+                                browserLabel.textContent = "ACTIVE";
+                                browserLabel.className = "text-emerald-400 font-bold uppercase tracking-wider";
+                            }
+                        }
+
+                        if (typeof fetchActiveWindowAndTab === 'function') {
+                            fetchActiveWindowAndTab();
+                        }
+                    }
                 }
             }
         }
