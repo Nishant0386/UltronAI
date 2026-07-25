@@ -515,7 +515,7 @@ class PlaywrightBrowserAgent:
 
         # --- Strategy 2: Deep Shadow DOM Piercing via page.evaluate() ---
         try:
-            js_code = """
+            js_code = r"""
             (desc) => {
                 const norm = (s) => (s || '').toLowerCase().replace(/…/g, '...').replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
                 const target = norm(desc);

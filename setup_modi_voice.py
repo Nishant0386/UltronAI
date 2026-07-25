@@ -11,17 +11,31 @@ Modi MP3 path used for speaker embedding extraction:
 """
 import os, io, sys
 
-MODI_AUDIO_PATH = r"C:\Users\nisha\Downloads\bearing-translate (1)\ultron-translate\PM Modi's big message to sportspersons for the Olympics 2036 #shorts - Narendra Modi (128k).mp3"
+def _find_modi_audio_path() -> str | None:
+    env_path = os.getenv("MODI_AUDIO_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    search_dirs = [base_dir, os.path.join(base_dir, "assets"), os.path.dirname(base_dir)]
+    for sdir in search_dirs:
+        if os.path.exists(sdir):
+            for fname in os.listdir(sdir):
+                if fname.lower().endswith(".mp3") and "modi" in fname.lower():
+                    return os.path.join(sdir, fname)
+    return None
+
+MODI_AUDIO_PATH = _find_modi_audio_path()
 
 print("=" * 65)
 print("ULTRON OS — Modi Voice Setup (SpeechT5 + librosa, no C++ needed)")
 print("=" * 65)
 
 # 1. Check Modi MP3
-if not os.path.exists(MODI_AUDIO_PATH):
-    print(f"\n[ERROR]: Modi MP3 not found:\n  {MODI_AUDIO_PATH}")
-    sys.exit(1)
-print(f"\n[OK]: Modi MP3 found.")
+if not MODI_AUDIO_PATH or not os.path.exists(MODI_AUDIO_PATH):
+    print(f"\n[WARNING]: Modi MP3 file not found in workspace search path.")
+    print("  SpeechT5 will automatically fall back to CMU-Arctic deep male speaker embedding.")
+else:
+    print(f"\n[OK]: Modi MP3 found at: {MODI_AUDIO_PATH}")
 
 # 2. Check dependencies
 print("\n[INFO]: Checking dependencies...")

@@ -11,7 +11,22 @@ import asyncio
 router = APIRouter()
 
 # ─── Modi Voice Reference MP3 path ────────────────────────────────────────────
-MODI_AUDIO_PATH = r"C:\Users\nisha\Downloads\bearing-translate (1)\ultron-translate\PM Modi's big message to sportspersons for the Olympics 2036 #shorts - Narendra Modi (128k).mp3"
+def _find_modi_audio_path() -> str | None:
+    env_path = os.getenv("MODI_AUDIO_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
+        
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    search_dirs = [base_dir, os.path.join(base_dir, "assets"), os.path.dirname(base_dir)]
+    
+    for sdir in search_dirs:
+        if os.path.exists(sdir):
+            for fname in os.listdir(sdir):
+                if fname.lower().endswith(".mp3") and "modi" in fname.lower():
+                    return os.path.join(sdir, fname)
+    return None
+
+MODI_AUDIO_PATH = _find_modi_audio_path()
 
 # ─── Lazy-loaded models (cached after first call) ─────────────────────────────
 _models_loaded = False
@@ -110,19 +125,48 @@ VOICE_MAP = {
     "ar": "ar-AE-HamdanNeural",
 }
 
-import base64
+def _generate_with_kokoro(text: str) -> bytes | None:
+    """Generate speech using local Kokoro TTS engine if installed."""
+    try:
+        from kokoro_onnx import Kokoro
+        import soundfile
+        kokoro_path = os.getenv("KOKORO_MODEL_PATH", "kokoro-v0_19.onnx")
+        voices_path = os.getenv("KOKORO_VOICES_PATH", "voices.json")
+        if os.path.exists(kokoro_path) and os.path.exists(voices_path):
+            kokoro = Kokoro(kokoro_path, voices_path)
+            samples, sample_rate = kokoro.create(text[:500], voice="am_adam", speed=1.0, lang="en-us")
+            buf = io.BytesIO()
+            soundfile.write(buf, samples, sample_rate, format="WAV")
+            buf.seek(0)
+            return buf.read()
+    except Exception as e:
+        print(f"[KOKORO TTS]: Kokoro TTS not active: {e}")
+    return None
 
 class SpeakRequest(BaseModel):
     text: str
     lang: str = "auto"
     use_modi_voice: bool = True
+    prefer_kokoro: bool = False
 
 @router.post("/speak")
 async def speak_text(req: SpeakRequest):
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="No text to speak.")
 
-    # ── PRIORITY 1: Modi voice via SpeechT5 ────
+    # ── PRIORITY 1: Kokoro TTS (if requested/available) ────
+    if req.prefer_kokoro:
+        audio_bytes = await asyncio.to_thread(_generate_with_kokoro, req.text)
+        if audio_bytes:
+            b64 = base64.b64encode(audio_bytes).decode("utf-8")
+            return {
+                "status": "success",
+                "audio_base64": f"data:audio/wav;base64,{b64}",
+                "media_type": "audio/wav",
+                "engine": "kokoro"
+            }
+
+    # ── PRIORITY 2: Modi voice via SpeechT5 ────
     if req.use_modi_voice:
         try:
             audio_bytes = await asyncio.to_thread(_generate_with_speecht5, req.text)
@@ -131,8 +175,11 @@ async def speak_text(req: SpeakRequest):
                 return {
                     "status": "success",
                     "audio_base64": f"data:audio/wav;base64,{b64}",
-                    "media_type": "audio/wav"
+                    "media_type": "audio/wav",
+                    "engine": "speecht5_modi"
                 }
+        except Exception as e:
+            print(f"[MODI TTS]: SpeechT5 failed, using Edge-TTS fallback: {e}")
         except Exception as e:
             print(f"[MODI TTS]: SpeechT5 failed, using Edge-TTS fallback: {e}")
 

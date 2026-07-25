@@ -2,6 +2,86 @@
 
 All system updates, bug fixes, and architectural implementations are logged below in chronological order:
 
+## [v2.8.0] - 2026-07-25
+
+### 1. Phase 7 Offline Voice Engine (Faster-Whisper STT & Kokoro TTS)
+- **Offline Speech-to-Text Fallback ([backend/main.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/main.py) & [backend/services/whisper.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/services/whisper.py))**:
+  - Configured `/api/transcribe` to attempt high-speed Groq Whisper API first, falling back to local `faster-whisper` when offline or without API keys.
+- **Kokoro & SpeechT5 Text-to-Speech ([backend/routers/tts.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/routers/tts.py))**:
+  - Integrated Kokoro ONNX TTS engine synthesis (`_generate_with_kokoro`) with failover to SpeechT5 Modi voice cloning and Edge-TTS.
+
+---
+
+## [v2.7.0] - 2026-07-25
+
+### 1. Phase 6 Plugin Architecture Framework
+- **Plugin Base & Plugin Manager ([plugins/base_plugin.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/plugins/base_plugin.py) & [plugins/plugin_manager.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/plugins/plugin_manager.py))**:
+  - Implemented modular plugin base class (`BasePlugin`) and auto-discovery `PluginManager` exposing tool registries (`name.tool`).
+- **Core Specialized Plugins ([plugins/](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/plugins/))**:
+  - Created `plugins/file_agent` (`Read`, `Write`, `Search`).
+  - Created `plugins/terminal` (`Run`).
+  - Created `plugins/github` (`Status`, `Push`).
+  - Created `plugins/research` (`Search`).
+- **Plugin REST Endpoints ([backend/main.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/main.py))**:
+  - Added `GET /api/plugins` (lists discovered plugins & permissions) and `POST /api/plugins/execute` (dynamically invokes plugin tools).
+
+---
+
+## [v2.6.0] - 2026-07-25
+
+### 1. Phase 5 Advanced Vector Memory Agent (SQLite + FAISS)
+- **Vector Memory Agent ([backend/services/vector_memory.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/services/vector_memory.py))**:
+  - Implemented `VectorMemoryAgent` combining SQLite storage with FAISS / NumPy cosine similarity vector embeddings.
+  - Supports 384-dimensional semantic text embeddings using SentenceTransformers `BAAI/bge-small-en-v1.5` with n-gram hash vector fallback.
+- **Semantic Prompt Context Retrieval ([backend/main.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/main.py))**:
+  - Updated `/api/chat` and `/api/memory` REST routes to perform top-K semantic vector search over stored user memories, preferences, and project facts.
+
+---
+
+## [v2.5.0] - 2026-07-25
+
+### 1. Phase 4 Action Security Gatekeeper & Permission Levels
+- **Security & Permission Gatekeeper ([backend/security.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/security.py))**:
+  - Implemented 4-tier security classification:
+    - `SAFE`: Read-only queries, translations, web search, memory lookups.
+    - `MEDIUM`: Browser navigation, DOM clicking, reading web pages.
+    - `HIGH`: Desktop window focus, app launching, desktop typing/mouse clicks.
+    - `CRITICAL`: File deletion, terminal/shell command execution, email sending, financial operations.
+- **Executor Authorization Enforcement ([backend/executor.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/executor.py))**:
+  - Integrated `ActionSecurityGatekeeper.authorize_step()` into `execute_step()` to block unauthorized high-risk steps and log security levels in real-time HUD.
+
+---
+
+## [v2.4.0] - 2026-07-25
+
+### 1. Phase 3 Multi-LLM Provider Abstraction
+- **Unified Multi-LLM Provider Router ([backend/services/llm_provider.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/services/llm_provider.py))**:
+  - Implemented cost-optimized priority router with auto-fallback:
+    1. **Ollama** (Local zero-cost LLM via `http://localhost:11434`)
+    2. **Groq API** (`llama-3.3-70b-versatile`, `llama3-8b-8192`)
+    3. **Google Gemini** (`gemini-2.0-flash`, `gemini-2.5-flash`)
+    4. **Anthropic Claude** (`claude-3-5-sonnet`)
+    5. **OpenAI** (`gpt-4o-mini`)
+    6. **NVIDIA API** (`mistral-nemotron`, `llama-3.2-3b-instruct`, `granite-3.0-8b-instruct`)
+- **SSE Stream Integration ([backend/main.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/main.py))**:
+  - Wired `MultiLLMRouter.stream_completion()` into `/api/chat` SSE pipeline while preserving action plan extraction (`parse_execution_plan`).
+
+---
+
+## [v2.3.0] - 2026-07-25
+
+### 1. Phase 2 Architecture Refactoring & Path Cleanups
+- **Dynamic Modi Voice Path Resolution ([backend/routers/tts.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/routers/tts.py) & [setup_modi_voice.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/setup_modi_voice.py))**:
+  - Replaced hardcoded legacy path with dynamic `MODI_AUDIO_PATH` search across environment variables and workspace directories.
+- **FastAPI Router Unification ([backend/main.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/main.py))**:
+  - Mounted `backend.routers.tts` cleanly via `app.include_router(tts_router, prefix="/api")` and removed redundant delegate handlers.
+- **Lazy Service Model Loading ([backend/services/llm.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/services/llm.py) & [backend/services/whisper.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/services/whisper.py))**:
+  - Converted top-level client/model instantiations into lazy initializers to prevent import-time crashes when API keys or models are missing.
+- **Dependency & Imports Fix ([requirements.txt](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/requirements.txt))**:
+  - Added missing `wikipedia` and `openai` packages to `requirements.txt` and wrapped `import wikipedia` in `backend/main.py` with safe `try...except` handling.
+- **Python Syntax Warning Resolution ([backend/browser_agent.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/browser_agent.py))**:
+  - Converted JS injection template to raw multiline string `r"""..."""` to resolve Python 3.12+ regex escape warnings.
+
 ---
 
 ## [v2.2.0] - 2026-07-25

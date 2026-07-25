@@ -25,19 +25,18 @@ import pytesseract
 import io
 from groq import AsyncGroq
 from duckduckgo_search import DDGS
-import wikipedia
+try:
+    import wikipedia
+except ImportError:
+    wikipedia = None
 
 # --- WIKIPEDIA FETCH FUNCTION ---
 def fetch_wikipedia_summary(query: str):
+    if not wikipedia:
+        return None
     try:
         summary = wikipedia.summary(query, sentences=3, auto_suggest=True)
         return summary
-    except wikipedia.exceptions.DisambiguationError as e:
-        try:
-            if e.options:
-                return wikipedia.summary(e.options[0], sentences=3)
-        except Exception:
-            return None
     except Exception:
         return None
 
@@ -174,11 +173,9 @@ async def translate_text(req: TranslateRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail="Translation failed.")
 
-@app.post("/api/speak")
-async def speak_text(req: SpeakRequest):
-    from backend.routers.tts import speak_text as modi_speak_text, SpeakRequest as ModiSpeakRequest
-    modi_req = ModiSpeakRequest(text=req.text, lang=req.lang, use_modi_voice=True)
-    return await modi_speak_text(modi_req)
+from backend.routers.tts import router as tts_router
+
+app.include_router(tts_router, prefix="/api")
 
 @app.post("/api/ocr")
 async def ocr_translate(image: UploadFile = File(...), target: str = Form("en")):
@@ -201,36 +198,41 @@ async def ocr_translate(image: UploadFile = File(...), target: str = Form("en"))
 
 @app.post("/api/transcribe")
 async def transcribe_endpoint(audio: UploadFile = File(...)):
-    global groq_client
-    # Lazily initialize groq_client if key was loaded/updated in the env
-    if not groq_client:
-        api_key = os.getenv("GROQ_API_KEY")
-        if api_key:
-            groq_client = AsyncGroq(api_key=api_key)
-            
-    if not groq_client:
-        raise HTTPException(status_code=501, detail="Groq API key not configured on backend.")
-        
+    temp_dir = tempfile.gettempdir()
+    file_ext = os.path.splitext(audio.filename)[1] or ".webm"
+    temp_path = os.path.join(temp_dir, f"transcribe_{uuid.uuid4().hex}{file_ext}")
+    
     try:
-        temp_dir = tempfile.gettempdir()
-        file_ext = os.path.splitext(audio.filename)[1] or ".webm"
-        temp_path = os.path.join(temp_dir, f"transcribe_{uuid.uuid4().hex}{file_ext}")
-        
         with open(temp_path, "wb") as f:
             f.write(await audio.read())
-            
-        try:
-            with open(temp_path, "rb") as file_bytes:
-                transcription = await groq_client.audio.transcriptions.create(
-                    file=(os.path.basename(temp_path), file_bytes.read()),
-                    model="whisper-large-v3",
-                )
-            return {"transcript": transcription.text}
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+
+        # PRIORITY 1: Groq Whisper API (High speed cloud)
+        api_key = os.getenv("GROQ_API_KEY")
+        if api_key:
+            try:
+                gclient = AsyncGroq(api_key=api_key)
+                with open(temp_path, "rb") as file_bytes:
+                    transcription = await gclient.audio.transcriptions.create(
+                        file=(os.path.basename(temp_path), file_bytes.read()),
+                        model="whisper-large-v3",
+                    )
+                if transcription and transcription.text:
+                    return {"transcript": transcription.text, "engine": "groq_whisper"}
+            except Exception as ge:
+                print(f"[STT]: Groq Whisper API failed ({ge}), falling back to Faster-Whisper local...")
+
+        # PRIORITY 2: Faster Whisper Local (Offline zero-cloud)
+        from backend.services.whisper import transcribe_async
+        local_transcript = await transcribe_async(temp_path)
+        if local_transcript:
+            return {"transcript": local_transcript, "engine": "faster_whisper_local"}
+
+        raise HTTPException(status_code=500, detail="Transcription failed on both cloud and local engines.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 @app.post("/api/upload-doc")
 async def upload_document(file: UploadFile = File(...)):
@@ -377,15 +379,13 @@ async def chat_endpoint(req: ChatRequest):
     # 1. Retrieve stored user memories/facts
     stored_memories_context = ""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT fact FROM user_facts ORDER BY created_at DESC")
-        facts = [r[0] for r in cursor.fetchall()]
-        conn.close()
-        if facts:
-            stored_memories_context = "\n[USER PERSISTENT MEMORY / STORED FACTS]:\n" + "\n".join([f"- {fact}" for fact in facts])
+        from backend.services.vector_memory import VectorMemoryAgent
+        vm = VectorMemoryAgent(DB_PATH)
+        top_memories = vm.search_memory(last_user_query, top_k=5) if last_user_query else vm.list_memories()[:5]
+        if top_memories:
+            stored_memories_context = "\n[USER PERSISTENT MEMORY / SEMANTIC VECTOR RETRIEVAL]:\n" + "\n".join([f"- {m['content']}" for m in top_memories])
     except Exception as e:
-        print("Failed to query user memory:", e)
+        print("Failed to query vector memory agent:", e)
 
     # 2. Retrieve running OS / active window and browser state context (Active Memory)
     state_context = ""
@@ -510,187 +510,86 @@ async def chat_endpoint(req: ChatRequest):
         if os.path.exists(parent_env):
             load_dotenv(parent_env, override=True)
 
-        # ===== PRIORITY 1: NVIDIA API (Primary) =====
-        nvidia_api_key = os.getenv("NVIDIA_API_KEY")
-        if nvidia_api_key:
-            global nvidia_client
-            if not nvidia_client:
-                try:
-                    from openai import AsyncOpenAI
-                    import httpx
-                    nvidia_client = AsyncOpenAI(
-                        base_url="https://integrate.api.nvidia.com/v1",
-                        api_key=nvidia_api_key,
-                        http_client=httpx.AsyncClient(timeout=15.0)
-                    )
-                except Exception as init_err:
-                    print(f"[NVIDIA]: Failed to init client: {init_err}")
+        from backend.services.llm_provider import MultiLLMRouter
+        router = MultiLLMRouter()
 
-            if nvidia_client:
-                nvidia_models_to_try = [
-                    "mistralai/mistral-nemotron",          # Ultra-fast and smart Mistral Niemotron
-                    "meta/llama-3.2-3b-instruct",          # Fast LLaMA 3.2 3B
-                    "ibm/granite-3.0-8b-instruct",         # Fast IBM Granite 8B
-                    "meta/llama-3.1-8b-instruct"           # Fallback LLaMA 3.1 8B
-                ]
-                
-                stream = None
-                last_error = None
-                formatted_messages = [{"role": "system", "content": system_prompt}] + history
-                
-                for model in nvidia_models_to_try:
-                    try:
-                        stream = await nvidia_client.chat.completions.create(
-                            model=model,
-                            messages=formatted_messages,
-                            temperature=1,
-                            top_p=1,
-                            max_tokens=4096,
-                            seed=42,
-                            stream=True
-                        )
-                        break
-                    except Exception as e:
-                        print(f"[NVIDIA]: Model {model} failed: {e}")
-                        last_error = e
-                        stream = None
-                        continue
-                
-                if stream:
-                    accumulated_content = ""
-                    try:
-                        async for chunk in stream:
-                            if not getattr(chunk, "choices", None) or len(chunk.choices) == 0:
-                                continue
-                            delta = chunk.choices[0].delta
-                            if getattr(delta, "content", None) is not None:
-                                txt = delta.content
-                                accumulated_content += txt
-                                yield f"data: {json.dumps({'content': txt})}\n\n"
-                                await asyncio.sleep(0.005) # Yield to event loop to force SSE flush
-                                
-                        # Check for execution plan steps
-                        clean_text, steps = parse_execution_plan(accumulated_content)
-                        if steps:
-                            yield f"data: {json.dumps({'agent_log': f'[PLANNER CORE]: Found execution plan with {len(steps)} steps.'})}\n\n"
-                            log_queue = asyncio.Queue()
-                            async def async_log_callback(msg):
-                                log_queue.put_nowait(msg)
-                            async def run_executor_task():
-                                try:
-                                    await execute_steps_list(steps, async_log_callback)
-                                except Exception as e:
-                                    await async_log_callback(f"[ERROR]: Executor failed - {str(e)}")
-                                finally:
-                                    await log_queue.put(None)
-                            executor_task = asyncio.create_task(run_executor_task())
-                            while True:
-                                log_msg = await log_queue.get()
-                                if log_msg is None:
-                                    break
-                                yield f"data: {json.dumps({'agent_log': log_msg})}\n\n"
-                            await executor_task
-                        yield f"data: {json.dumps({'done': True})}\n\n"
-                        return
-                    except Exception as e:
-                        yield f"data: {json.dumps({'error': str(e)})}\n\n"
-                        return
-                else:
-                    print(f"[NVIDIA]: All models failed. Last error: {last_error}. Falling back to Gemini...")
+        accumulated_content = ""
+        log_queue = asyncio.Queue()
 
-        # ===== PRIORITY 2: Google Gemini (fallback, rate limited) =====
-        gemini_api_key = os.getenv("GEMINI_API_KEY")
-        if gemini_api_key:
-            import google.generativeai as genai
-            genai.configure(api_key=gemini_api_key)
-            
-            gemini_models_to_try = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-flash-latest"]
-            gemini_success = False
-            gemini_last_error = None
-            
-            for gm_name in gemini_models_to_try:
-                try:
-                    gemini_model = genai.GenerativeModel(gm_name)
-                    
-                    full_prompt = system_prompt + "\n\nConversation History:\n"
-                    for h in history:
-                        role_label = "User" if h.get("role") == "user" else "Assistant"
-                        full_prompt += f"{role_label}: {h.get('content', '')}\n"
-                    
-                    res = gemini_model.generate_content(full_prompt, stream=True)
-                    accumulated_content = ""
-                    for chunk in res:
-                        if chunk.text:
-                            accumulated_content += chunk.text
-                            yield f"data: {json.dumps({'content': chunk.text})}\n\n"
-                            await asyncio.sleep(0.01)
-                    
-                    try:
-                        clean_text, steps = parse_execution_plan(accumulated_content)
-                        if steps:
-                            yield f"data: {json.dumps({'agent_log': f'[PLANNER CORE]: Found execution plan with {len(steps)} steps.'})}\n\n"
-                            log_queue = asyncio.Queue()
-                            async def async_gemini_log(msg):
-                                log_queue.put_nowait(msg)
-                            async def run_gemini_executor():
-                                try:
-                                    await execute_steps_list(steps, async_gemini_log)
-                                except Exception as ex_err:
-                                    await async_gemini_log(f"[ERROR]: Executor failed - {str(ex_err)}")
-                                finally:
-                                    await log_queue.put(None)
-                            executor_task = asyncio.create_task(run_gemini_executor())
-                            while True:
-                                log_msg = await log_queue.get()
-                                if log_msg is None:
-                                    break
-                                yield f"data: {json.dumps({'agent_log': log_msg})}\n\n"
-                            await executor_task
-                        yield f"data: {json.dumps({'done': True})}\n\n"
-                    except Exception as pe:
-                        print(f"Error parsing Gemini execution plan: {pe}")
-                        yield f"data: {json.dumps({'done': True})}\n\n"
-                    
-                    gemini_success = True
-                    return
-                except Exception as ge:
-                    gemini_last_error = ge
-                    err_str = str(ge)
-                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                        import re
-                        retry_match = re.search(r'retry in (\d+(?:\.\d+)?)s', err_str)
-                        wait_time = float(retry_match.group(1)) + 1.0 if retry_match else 15.0
-                        wait_time = min(wait_time, 30.0)
-                        print(f"[GEMINI]: Rate limit on {gm_name}. Waiting {wait_time:.1f}s...")
-                        yield f"data: {json.dumps({'agent_log': f'[GEMINI]: Rate limited. Waiting {wait_time:.0f}s...'})}\n\n"
-                        await asyncio.sleep(wait_time)
-                    else:
-                        print(f"[GEMINI FAIL on {gm_name}]: {ge}")
-                    continue
-            
-            if not gemini_success and gemini_last_error:
-                print(f"[GEMINI]: All models exhausted. Last error: {gemini_last_error}")
+        async def router_log(msg: str):
+            await log_queue.put(msg)
 
-        # ===== ALL FAILED =====
-        error_msg = "All AI models unavailable. "
-        if not groq_api_key and not gemini_api_key:
-            error_msg += "No API keys configured. Add GROQ_API_KEY or GEMINI_API_KEY to your .env file."
-        else:
-            error_msg += "Both Groq and Gemini failed. Check API keys or network."
-        yield f"data: {json.dumps({'error': error_msg})}\n\n"
+        async def run_llm_stream():
+            nonlocal accumulated_content
+            try:
+                async for chunk in router.stream_completion(history, system_prompt, router_log):
+                    accumulated_content += chunk
+                    await log_queue.put({"content": chunk})
+            except Exception as e:
+                await log_queue.put({"error": str(e)})
+            finally:
+                await log_queue.put(None)
+
+        llm_task = asyncio.create_task(run_llm_stream())
+
+        while True:
+            item = await log_queue.get()
+            if item is None:
+                break
+            if isinstance(item, dict):
+                if "content" in item:
+                    yield f"data: {json.dumps({'content': item['content']})}\n\n"
+                    await asyncio.sleep(0.005)
+                elif "error" in item:
+                    yield f"data: {json.dumps({'error': item['error']})}\n\n"
+            elif isinstance(item, str):
+                yield f"data: {json.dumps({'agent_log': item})}\n\n"
+
+        await llm_task
+
+        # Parse & Execute Plan if action steps present
+        if accumulated_content:
+            try:
+                clean_text, steps = parse_execution_plan(accumulated_content)
+                if steps:
+                    yield f"data: {json.dumps({'agent_log': f'[PLANNER CORE]: Found execution plan with {len(steps)} steps.'})}\n\n"
+                    exec_log_queue = asyncio.Queue()
+
+                    async def async_log_callback(msg):
+                        exec_log_queue.put_nowait(msg)
+
+                    async def run_executor_task():
+                        try:
+                            await execute_steps_list(steps, async_log_callback)
+                        except Exception as e:
+                            await async_log_callback(f"[ERROR]: Executor failed - {str(e)}")
+                        finally:
+                            await exec_log_queue.put(None)
+
+                    executor_task = asyncio.create_task(run_executor_task())
+                    while True:
+                        log_msg = await exec_log_queue.get()
+                        if log_msg is None:
+                            break
+                        yield f"data: {json.dumps({'agent_log': log_msg})}\n\n"
+                    await executor_task
+            except Exception as pe:
+                print(f"[PLANNER CORE]: Error parsing execution plan: {pe}")
+
+        yield f"data: {json.dumps({'done': True})}\n\n"
         return
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+from backend.services.vector_memory import VectorMemoryAgent
+vector_memory = VectorMemoryAgent(DB_PATH)
+
 @app.get("/api/memory")
 async def get_memory():
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, fact, created_at FROM user_facts ORDER BY created_at DESC")
-        rows = cursor.fetchall()
-        conn.close()
-        return [{"id": r[0], "fact": r[1], "created_at": r[2]} for r in rows]
+        memories = vector_memory.list_memories()
+        # Format for backward compatibility with frontend
+        return [{"id": m["id"], "fact": m["content"], "created_at": m["created_at"]} for m in memories]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -699,26 +598,27 @@ async def save_memory(req: FactRequest):
     if not req.fact.strip():
         raise HTTPException(status_code=400, detail="Fact content cannot be empty.")
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO user_facts (fact) VALUES (?)", (req.fact.strip(),))
-        conn.commit()
-        conn.close()
-        return {"status": "success", "message": "Fact saved to database memory."}
+        res = vector_memory.store_memory(req.fact.strip())
+        return {"status": "success", "message": "Fact saved to vector database memory.", "data": res}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/api/memory/{fact_id}")
-async def delete_memory(fact_id: int):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM user_facts WHERE id = ?", (fact_id,))
-        conn.commit()
-        conn.close()
-        return {"status": "success", "message": "Fact deleted."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+from plugins.plugin_manager import PluginManager
+plugin_manager = PluginManager()
+plugin_manager.discover_plugins()
+
+class PluginExecuteRequest(BaseModel):
+    tool_name: str
+    params: Dict[str, Any] = {}
+
+@app.get("/api/plugins")
+async def list_plugins():
+    return {"status": "success", "plugins": plugin_manager.list_plugins()}
+
+@app.post("/api/plugins/execute")
+async def execute_plugin_tool(req: PluginExecuteRequest):
+    res = plugin_manager.execute_tool(req.tool_name, **req.params)
+    return {"status": "success", "result": res}
 
 def execute_system_command(action_type: str, app: str, text: str):
     """

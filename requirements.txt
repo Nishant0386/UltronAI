@@ -25,3 +25,5 @@ pywebview
 pystray
 pythonnet
 google-generativeai
+wikipedia
+openai

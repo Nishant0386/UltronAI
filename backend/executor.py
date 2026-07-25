@@ -355,9 +355,16 @@ async def execute_step(step: dict, log_callback, using_system_browser: bool = Fa
         using_system_browser: If True, browser steps are routed through desktop-level 
                              interactions (pydirectinput/pywinauto) instead of Playwright page API
     """
-    stype = step.get("type", "").lower().strip()
-    expected_active_app = step.get("_expected_active_app")
-    
+    from .security import ActionSecurityGatekeeper
+    allowed, level, sec_msg = ActionSecurityGatekeeper.authorize_step(step)
+    await log_callback(f"[{level.value} SECURITY]: {sec_msg}")
+    if not allowed:
+        return {
+            "status": "error",
+            "message": f"Step '{stype}' blocked by Security Gatekeeper: {sec_msg}",
+            "security_level": level.value
+        }
+
     await log_callback(f"Executing: {stype}...")
     
     try:
