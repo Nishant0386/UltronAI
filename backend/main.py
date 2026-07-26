@@ -615,10 +615,12 @@ class PluginExecuteRequest(BaseModel):
 async def list_plugins():
     return {"status": "success", "plugins": plugin_manager.list_plugins()}
 
-@app.post("/api/plugins/execute")
-async def execute_plugin_tool(req: PluginExecuteRequest):
-    res = plugin_manager.execute_tool(req.tool_name, **req.params)
-    return {"status": "success", "result": res}
+from backend.services.briefing import BriefingManager
+briefing_manager = BriefingManager()
+
+@app.get("/api/briefing")
+async def get_briefing():
+    return {"status": "success", "briefing": briefing_manager.get_morning_briefing()}
 
 def execute_system_command(action_type: str, app: str, text: str):
     """

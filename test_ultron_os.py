@@ -38,12 +38,32 @@ class TestUltronOS(unittest.TestCase):
         pm = PluginManager()
         pm.discover_plugins()
         plugins = pm.list_plugins()
-        self.assertTrue(len(plugins) >= 3)
+        self.assertTrue(len(plugins) >= 7)
         
         # Test executing a safe plugin tool (file search)
         res = pm.execute_tool("file_agent.Search", directory=".", query="requirements.txt")
         self.assertEqual(res["status"], "success")
         self.assertTrue(len(res["matches"]) > 0)
+
+    def test_mark_l_merged_services(self):
+        """Test Mark-L hardware telemetry, briefing, and proactive engine."""
+        from backend.services.system_monitor import get_system_status
+        from backend.services.briefing import BriefingManager
+        from backend.services.proactive import ProactiveEngine
+
+        status = get_system_status()
+        self.assertIn("cpu_percent", status)
+        self.assertIn("ram_percent", status)
+
+        bm = BriefingManager("test_session_memory.json")
+        bm.save_session_summary("Worked on Mark-L integration")
+        briefing = bm.get_morning_briefing()
+        self.assertIn("Worked on Mark-L integration", briefing)
+        if os.path.exists("test_session_memory.json"):
+            os.remove("test_session_memory.json")
+
+        pe = ProactiveEngine()
+        self.assertTrue(pe.can_checkin())
 
 
 if __name__ == "__main__":

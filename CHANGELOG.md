@@ -2,6 +2,24 @@
 
 All system updates, bug fixes, and architectural implementations are logged below in chronological order:
 
+## [v2.9.0] - 2026-07-26
+
+### 1. Mark-L (50) Repository Integration & Merging
+- **Morning Briefing & Session Memory Engine ([backend/services/briefing.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/services/briefing.py))**:
+  - Integrated 1-2 sentence session summaries at session end and morning recap greetings (`GET /api/briefing`).
+- **Hardware Telemetry Monitoring ([backend/services/system_monitor.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/services/system_monitor.py))**:
+  - Integrated zero-subprocess CPU, RAM, GPU, and CPU temperature monitoring using `psutil`, `pynvml`, and `ctypes`.
+- **Proactive 2.0 Check-In Engine ([backend/services/proactive.py](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/backend/services/proactive.py))**:
+  - Implemented time-of-day (morning vs evening) and project-context aware proactive background check-in prompts.
+- **Mark-L Merged Specialized Plugins ([plugins/](file:///c:/Users/nisha/Downloads/ultron-translate-FIXED%20%282%29/ultron-translate/plugins/))**:
+  - `computer_settings`: Master volume & brightness control tools (`Volume`, `Brightness`).
+  - `background_monitor`: User-configured daily topic watcher tools (`AddTopic`, `CheckUpdates`).
+  - `weather`: Weather report lookup tool (`GetWeather`).
+  - `flight_finder`: Live flight availability and ticket pricing lookup tool (`SearchFlights`).
+  - `game_updater`: Steam & Epic Games update trigger tools (`CheckSteam`, `LaunchClient`).
+
+---
+
 ## [v2.8.0] - 2026-07-25
 
 ### 1. Phase 7 Offline Voice Engine (Faster-Whisper STT & Kokoro TTS)
