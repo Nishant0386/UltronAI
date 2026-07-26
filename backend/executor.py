@@ -1535,10 +1535,10 @@ async def execute_steps_list(steps: list, log_callback) -> list:
             await log_callback("[PLANNER CORE]: System browser mode active — browser steps will use desktop-level interaction")
         
         for i, step in enumerate(steps):
-            stype = step.get("type", "").lower().strip()
+            stype = (step.get("action_type") or step.get("type") or "").lower().strip()
             
-            if stype == "launch_app":
-                expected_active_app = step.get("app")
+            if stype in ["launch_app", "open_app", "start_app", "run_app"]:
+                expected_active_app = step.get("app") or step.get("app_name") or step.get("name")
             elif stype == "focus_window":
                 expected_active_app = step.get("title")
                 
@@ -1564,7 +1564,7 @@ async def execute_steps_list(steps: list, log_callback) -> list:
                 using_system_browser = True
                 await log_callback("[PLANNER CORE]: Switched to system browser mode — subsequent browser steps will use desktop interaction")
             
-            step_type = step.get("type", "unknown")
+            step_type = step.get("action_type") or step.get("type") or "unknown"
             if res.get("status") == "success":
                 status_msg = f"Step {i+1}/{len(steps)} ({step_type}): SUCCESS - {res.get('message')} (Evidence: {res.get('evidence')}, Attempts: {res.get('attempts')})"
                 await log_callback(status_msg)
