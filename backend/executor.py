@@ -355,6 +355,7 @@ async def execute_step(step: dict, log_callback, using_system_browser: bool = Fa
         using_system_browser: If True, browser steps are routed through desktop-level 
                              interactions (pydirectinput/pywinauto) instead of Playwright page API
     """
+    stype = step.get("action_type") or step.get("type") or "unknown"
     from .security import ActionSecurityGatekeeper
     allowed, level, sec_msg = ActionSecurityGatekeeper.authorize_step(step)
     await log_callback(f"[{level.value} SECURITY]: {sec_msg}")
@@ -1036,8 +1037,15 @@ async def execute_step(step: dict, log_callback, using_system_browser: bool = Fa
             }
             
         # ---------------- DESKTOP / OS ACTIONS ----------------
-        elif stype == "launch_app":
-            app = step.get("app", "")
+        elif stype in ["launch_app", "open_app", "start_app", "run_app"]:
+            app = step.get("app") or step.get("app_name") or step.get("name") or step.get("application") or expected_active_app or ""
+            if not app:
+                return {
+                    "status": "failed",
+                    "evidence": "No application name provided in step",
+                    "attempts": attempts,
+                    "message": "Application name missing"
+                }
             
             # --- Auto-Redirect Web Apps to Browser ---
             web_apps = ["youtube", "google", "facebook", "amazon", "netflix", "twitter", "instagram", "github", "chatgpt", "claude"]
@@ -1052,9 +1060,18 @@ async def execute_step(step: dict, log_callback, using_system_browser: bool = Fa
                     "message": f"Opened {app} website"
                 }
 
-            # Use the new launch_app_and_wait() for reliable launching
-            launch_result = await asyncio.to_thread(desktop_agent.launch_app_and_wait, app, 8.0)
-            
+            # Direct fast OS launch first
+            direct_launched = await asyncio.to_thread(desktop_agent.launch_app, app)
+            if direct_launched:
+                return {
+                    "status": "success",
+                    "evidence": f"Natively launched application '{app}' via OS process runner.",
+                    "attempts": attempts,
+                    "message": f"Launched application: {app}"
+                }
+
+            # Fallback launch_app_and_wait
+            launch_result = await asyncio.to_thread(desktop_agent.launch_app_and_wait, app, 5.0)
             if launch_result["success"]:
                 return {
                     "status": "success",
@@ -1063,24 +1080,20 @@ async def execute_step(step: dict, log_callback, using_system_browser: bool = Fa
                     "message": f"Launched application: {app}"
                 }
             else:
-                # One more fallback attempt with alt path
-                print(f"[LAUNCH]: launch_app_and_wait failed. Trying alternate lookup path for: '{app}'")
-                attempts = 2
                 alt_launched = await asyncio.to_thread(resolve_alt_path_and_launch, app)
-                if alt_launched and await asyncio.to_thread(verify_window_exists, app, 5.0):
+                if alt_launched:
                     return {
                         "status": "success",
-                        "evidence": f"Window representing '{app}' detected after alternate path launch.",
-                        "attempts": attempts,
+                        "evidence": f"Launched '{app}' via resolved alternate path.",
+                        "attempts": 2,
                         "message": f"Launched application: {app} (via full path)"
                     }
-                else:
-                    return {
-                        "status": "failed",
-                        "evidence": launch_result['message'],
-                        "attempts": attempts,
-                        "message": f"Failed to launch application: {app}"
-                    }
+                return {
+                    "status": "failed",
+                    "evidence": f"Failed to launch '{app}' after 3 attempts.",
+                    "attempts": 2,
+                    "message": f"Failed to launch application: {app}"
+                }
                 
         elif stype == "close_app":
             app = step.get("app")

@@ -13,10 +13,13 @@ def map_legacy_action(plan) -> list:
     atype = plan.get("action_type") or plan.get("type")
     if atype == "open_app_and_type":
         return [
-            {"type": "launch_app", "app": plan.get("app")},
+            {"type": "launch_app", "app": plan.get("app") or plan.get("app_name") or plan.get("name")},
             {"type": "wait", "seconds": 3},
             {"type": "type", "text": plan.get("text")}
         ]
+    elif atype in ("open_app", "launch_app", "start_app", "run_app"):
+        app_name = plan.get("app") or plan.get("app_name") or plan.get("name") or plan.get("application") or ""
+        return [{"type": "launch_app", "app": app_name}]
     elif atype == "open_url":
         return [{"type": "new_tab", "url": plan.get("url")}]
     elif atype == "send_email":
