@@ -11,17 +11,31 @@ def map_legacy_action(plan) -> list:
         return plan["steps"]
     
     atype = plan.get("action_type") or plan.get("type")
-    if atype == "open_app_and_type":
+    if not atype:
+        return []
+
+    # Guarantee 'type' key exists on the plan dict
+    if "type" not in plan:
+        plan["type"] = atype
+
+    if atype in ("open_app_and_type", "launch_app_and_type"):
+        app_name = plan.get("app") or plan.get("app_name") or plan.get("name") or "notepad"
+        text = plan.get("text") or plan.get("text_to_type") or ""
         return [
-            {"type": "launch_app", "app": plan.get("app") or plan.get("app_name") or plan.get("name")},
-            {"type": "wait", "seconds": 3},
-            {"type": "type", "text": plan.get("text")}
+            {"type": "launch_app", "app": app_name},
+            {"type": "wait", "seconds": 2},
+            {"type": "type", "text": text}
         ]
     elif atype in ("open_app", "launch_app", "start_app", "run_app"):
         app_name = plan.get("app") or plan.get("app_name") or plan.get("name") or plan.get("application") or ""
         return [{"type": "launch_app", "app": app_name}]
-    elif atype == "open_url":
-        return [{"type": "new_tab", "url": plan.get("url")}]
+    elif atype in ("open_url", "smart_open_url", "smart_open", "open_browser", "open_url_and_interact"):
+        url = plan.get("url") or "https://google.com"
+        query = plan.get("search_query") or plan.get("query")
+        return [{"type": "smart_open_url", "url": url, "search_query": query}]
+    elif atype in ("open_maps_location", "open_maps"):
+        location = plan.get("location_name") or plan.get("location") or plan.get("query") or ""
+        return [{"type": "open_maps_location", "location_name": location}]
     elif atype == "send_email":
         to = plan.get("to", "")
         subject = plan.get("subject", "")
@@ -39,11 +53,8 @@ def map_legacy_action(plan) -> list:
         return [{"type": "launch_app", "app": cmd_map.get(plan.get("command"), "notepad")}]
     elif atype == "save_memory":
         return [{"type": "save_memory", "fact": plan.get("fact")}]
-    
-    if "type" in plan:
-        return [plan]
-        
-    return []
+
+    return [plan]
 
 def parse_execution_plan(llm_output: str) -> tuple:
     """
